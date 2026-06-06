@@ -13,8 +13,11 @@ Usage:
     python -m training.run_sft --config config/configs/chess_sft_cot.yaml --resume checkpoints/sft/run_name/step1000
 """
 import sys, pathlib, argparse
-repo_root = pathlib.Path(__file__).resolve().parents[2] 
-sys.path.insert(0, str(repo_root))
+sft_root = pathlib.Path(__file__).resolve().parents[2]   # sft/ (config, training, model, ...)
+shared_root = sft_root.parent                            # repo root (holds shared llm_tokens/)
+for _p in (shared_root, sft_root):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 
 from config import load_config

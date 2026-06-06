@@ -17,9 +17,10 @@ from pathlib import Path
 from typing import Optional, Union
 
 
-# Path to base_tokenizer.py (always the same relative to repo root)
+# Path to base_tokenizer.py in the shared llm_tokens/ package at the repo root
+# (sft/training/hf_tokenizer_utils.py -> parents[2] == repo root).
 _BASE_TOKENIZER_PATH = (
-    Path(__file__).resolve().parents[1] / "llm_tokens" / "chess" / "base_tokenizer.py"
+    Path(__file__).resolve().parents[2] / "llm_tokens" / "chess" / "base_tokenizer.py"
 )
 
 # ---------------------------------------------------------------------------

@@ -23,7 +23,6 @@ from accelerate import Accelerator
 from accelerate.utils import InitProcessGroupKwargs
 from .sft_data_utils import create_sft_dataloader, create_multi_turn_sft_dataloader
 from .sft_loss import SFTLoss
-from model.gpt2_model import GPT, GPTConfig
 from llm_tokens.chess.tokenizer_factory import init_tokenizer
 from .optim_sched import build_optimizer, build_scheduler
 from evaluation.example_evaluator import (
@@ -255,20 +254,13 @@ class SFTTrainer:
             self._pretrained_loaded = True
 
         else:
-            self.model = GPT(GPTConfig(
-                vocab_size=self.vocab_size,
-                block_size=self.mcfg.block_size,
-                n_layer=self.mcfg.n_layer,
-                n_head=self.mcfg.n_head,
-                n_embed=self.mcfg.n_embed,
-                dropout=self.mcfg.dropout,
-                mlp_type=self.mcfg.get("mlp_type", "default"),
-            ))
-            # Load pretrained weights if specified
-            if "pretrained_weights" in self.tcfg and self.tcfg.pretrained_weights:
-                self.acc.print(f"[SFT] Loading pretrained weights from {self.tcfg.pretrained_weights}")
-                self._load_pretrained_weights(self.tcfg.pretrained_weights)
-        
+            raise RuntimeError(
+                "[SFT] No pretrained model resolved. From-scratch training was "
+                "removed; SFT only fine-tunes pretrained HF checkpoints. Set "
+                "model.pretrained_model (or model.pretrain_spec) to a valid checkpoint."
+            )
+
+
         # Optional: Compile model
         if self.tcfg.get("compile_model", False):
             compile_mode = self.tcfg.get("compile_mode", "reduce-overhead")
@@ -498,136 +490,6 @@ class SFTTrainer:
         
         return sorted(set(files))
     
-    def _load_pretrained_weights(self, path: str):
-        """Load pretrained model weights and resize embeddings if vocab_size or seq_len grew."""
-        from pathlib import Path
-        import torch.nn.functional as F 
-
-        path = Path(path)
-
-        if path.is_dir():
-            model_path = path / "model.safetensors"
-            if not model_path.exists():
-                model_path = path / "pytorch_model.bin"
-            if not model_path.exists():
-                alt_paths = (
-                    list(path.glob("*.safetensors")) +
-                    list(path.glob("*.bin")) +
-                    list(path.glob("*.pt")) +
-                    list(path.glob("*.pth"))
-                )
-                if alt_paths:
-                    model_path = alt_paths[0]
-                else:
-                    raise FileNotFoundError(f"No model weights found in {path}")
-        else:
-            model_path = path
-        
-        self.acc.print(f"[SFT] Loading pretrained weights from {model_path}")
-
-        # 1) load raw checkpoint
-        if str(model_path).endswith(".safetensors"):
-            from safetensors.torch import load_file
-            state_dict = load_file(model_path)
-        else:
-            state_dict = torch.load(model_path, map_location="cpu")
-            if "model" in state_dict:
-                state_dict = state_dict["model"]
-            elif "state_dict" in state_dict:
-                state_dict = state_dict["state_dict"]
-
-        # ------ token embedding / lm head vocab resize ------
-        emb_key = 'token_emb.weight'
-        head_key = "head.weight"
-        
-        old_vocab_size = None
-        if emb_key in state_dict:
-            old_vocab_size = state_dict[emb_key].size(0)
-            new_vocab_size = self.vocab_size  # tokenizer vocab
-
-            if new_vocab_size < old_vocab_size:
-                raise ValueError(
-                    f"New vocab_size {new_vocab_size} < old_vocab_size {old_vocab_size}, "
-                    "shrinking embeddings is not supported."
-                )
-
-            if new_vocab_size > old_vocab_size:
-                self.acc.print(
-                    f"[SFT] Expanding vocab: old={old_vocab_size}, new={new_vocab_size}. "
-                    "Copying old embeddings; new tokens stay randomly initialized."
-                )
-
-                with torch.no_grad():
-                    # copy old token embeddings into model
-                    model_emb = self.model.token_emb.weight
-                    model_emb[:old_vocab_size] = state_dict[emb_key]
-
-                    # copy old lm head rows if shape matches
-                    if head_key in state_dict and hasattr(self.model, "head"):
-                        model_head = self.model.head.weight
-                        if model_head.size(0) == new_vocab_size:
-                            model_head[:old_vocab_size] = state_dict[head_key]
-
-                # prevent old-sized tensors from being loaded
-                del state_dict[emb_key]
-                if head_key in state_dict:
-                    del state_dict[head_key]
-
-        # ------ positional embedding resize (1024 -> 3072) ------
-        pos_key = "pos_emb.weight"
-        if pos_key in state_dict:
-            pos_old = state_dict[pos_key]              # [old_len, d_model]
-            old_len, d_model = pos_old.shape
-            new_len = self.mcfg.block_size            # e.g. 3072
-
-            if new_len < old_len:
-                raise ValueError(
-                    f"New block_size {new_len} < old positional length {old_len}, "
-                    "shrinking positional embedding is not supported."
-                )
-
-            if new_len > old_len:
-                self.acc.print(
-                    f"[SFT] Expanding pos_emb: old_len={old_len}, new_len={new_len} "
-                    "(using linear interpolation)."
-                )
-                # [old_len, d] -> [1, d, old_len]
-                pos_old_t = pos_old.transpose(0, 1).unsqueeze(0)
-                # interpolate along sequence dimension
-                pos_new_t = F.interpolate(
-                    pos_old_t, size=new_len, mode="linear", align_corners=False
-                )
-                # [1, d, new_len] -> [new_len, d]
-                pos_new = pos_new_t.squeeze(0).transpose(0, 1)
-                state_dict[pos_key] = pos_new
-
-        # ------ drop attn.mask buffers from checkpoint ------
-        keys_to_delete = [
-            k for k in list(state_dict.keys())
-            if k.endswith("attn.mask") or ".attn.mask" in k
-        ]
-        if keys_to_delete:
-            self.acc.print(f"[SFT] Dropping {len(keys_to_delete)} attn.mask buffers from checkpoint")
-            for k in keys_to_delete:
-                del state_dict[k]
-
-        # ------ load remaining params ------
-        missing, unexpected = self.model.load_state_dict(state_dict, strict=False)
-
-        if missing:
-            self.acc.print(f"[SFT] Missing keys: {missing}")
-        if unexpected:
-            self.acc.print(f"[SFT] Unexpected keys: {unexpected}")
-
-        if old_vocab_size is not None:
-            self.acc.print(
-                f"[SFT] Successfully loaded pretrained weights with resized embeddings "
-                f"(old_vocab={old_vocab_size}, new_vocab={self.vocab_size}, "
-                f"block_size={self.mcfg.block_size})"
-            )
-        else:
-            self.acc.print("[SFT] Successfully loaded pretrained weights")
-
     def _legacy_run_name(self, cfg) -> str:
         """Generate legacy run name from config."""
         m = cfg.model

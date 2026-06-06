@@ -1,35 +1,5 @@
 # Chess pretraining
 
-Self-contained pipeline for **pretraining** chess language models (Qwen3-style
-decoder-only transformers) on tokenized chess game data, across a grid of model
-sizes and compute-allocation fractions (`alpha`). This is stage 1 of the
-pre-to-post pipeline; the SFT and RL stages live in `../sft/` and `../rl/`.
-
-## Layout
-
-`llm_tokens/` lives at the **repo root**, one level above `pretraining/`, because
-the chess tokenizers are shared with SFT/RL. The entry point adds the repo root
-to `sys.path` automatically, so no install step is required.
-
-```
-<repo root>/
-├── llm_tokens/                     # SHARED chess tokenizers (LAN variants)
-│   └── chess/{base,lan,...}_tokenizer.py, tokenizer_factory.py
-└── pretraining/
-    ├── run_pretrain.sh             # entry point: launch pretraining
-    ├── environment.yml             # the `pretraining` conda environment
-    ├── config/                     # OmegaConf loader + config YAMLs
-    │   ├── config.py / __init__.py
-    │   └── configs/
-    │       ├── 6p5e18/             # C_total = 6.5e18, sizes 50m–1000m
-    │       ├── 6p5e18_small/       # C_total = 6.5e18, tiny sizes 20m / 32m
-    │       └── 6p5e19/             # C_total = 6.5e19, sizes 100m–1000m
-    ├── scripts/train/train_hf.py   # training CLI (invoked by the launcher)
-    ├── training/                   # HF trainer, data loader, optim/scheduler
-    │   └── trainer_hf.py, data_utils.py, optim_sched.py
-    └── evaluation/                 # in-the-loop eval (legal-move / match accuracy)
-```
-
 ## Environment
 
 Use the provided conda environment (named `pretraining`):

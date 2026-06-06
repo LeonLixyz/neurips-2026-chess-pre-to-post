@@ -7,25 +7,6 @@ fine-tuning (SFT) on a pretrained checkpoint with that data.
 The two stages are independent: you can plug in pre-generated CoT data and skip
 straight to SFT, or generate fresh data first.
 
-## Layout
-
-```
-sft/
-├── run_sft.sh                       # entry point: launch SFT (no SLURM)
-├── sft_max_train_files_map.json     # per-(compute,size,alpha,beta) cap on #train files
-├── config/                          # config loader + SFT yaml
-│   └── configs/qwen_multiturn_sft/sft_config_multi_path_2048.yaml
-├── scripts/train/run_sft.py         # SFT CLI (invoked by run_sft.sh)
-├── training/                        # SFT trainer, data loaders, loss, schedulers
-├── model/                           # GPT-2 style model + components
-├── llm_tokens/                      # chess tokenizers (LAN/SAN/UCI + SFT variants)
-├── evaluation/                      # eval utilities used during SFT
-└── cot_generation/
-    ├── puzzle_sequence_generator.py # main CoT generator
-    ├── policy.py / generator.py / subtree_minimax_generator.py
-    └── scripts/generate_cot.sh      # entry point: generate CoT data (no SLURM)
-```
-
 ## Requirements
 
 - Python 3.10+ with: `torch`, `transformers`, `accelerate`, `omegaconf`,

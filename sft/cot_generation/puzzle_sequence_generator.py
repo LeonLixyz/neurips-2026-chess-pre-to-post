@@ -44,9 +44,11 @@ import torch
 from tqdm import tqdm
 
 # ── Path setup ──────────────────────────────────────────────────────────────── #
-parent_dir = Path(__file__).parent.parent
-if str(parent_dir) not in sys.path:
-    sys.path.insert(0, str(parent_dir))
+parent_dir = Path(__file__).parent.parent        # sft/ (cot_generation package lives here)
+shared_root = parent_dir.parent                   # repo root (holds shared llm_tokens/)
+for _p in (shared_root, parent_dir):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 from cot_generation.policy import (
     random_sampling_policy,
@@ -55,7 +57,6 @@ from cot_generation.policy import (
 from cot_generation.subtree_minimax_generator import (
     move_to_lan,
     ModelSamplingPolicy,
-    load_gpt2_model_and_tokenizer,
     load_hf_model_and_tokenizer,
     TrajectoryTreeNode,
     annotate_tree_with_labels,
@@ -851,14 +852,6 @@ def create_sampling_policy(args, device):
         # Expose the engine so the caller can quit() it on exit.
         _sf._engine = engine
         return _sf
-
-    if args.sampling_policy == "model":
-        model, tokenizer = load_gpt2_model_and_tokenizer(
-            args.model_path, str(device), config_path=args.config_path
-        )
-        return ModelSamplingPolicy(
-            model, tokenizer, device, temperature=args.temperature
-        )
 
     if args.sampling_policy == "hf_model":
         model, tokenizer = load_hf_model_and_tokenizer(
@@ -2567,7 +2560,7 @@ def main():
     # ── Sampling policy ───────────────────────────────────────────────────────── #
     parser.add_argument(
         "--sampling_policy",
-        choices=["random", "stockfish", "model", "hf_model"],
+        choices=["random", "stockfish", "hf_model"],
         default="random",
     )
     parser.add_argument("--seed", type=int, default=42)

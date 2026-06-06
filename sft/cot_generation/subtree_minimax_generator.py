@@ -179,69 +179,6 @@ class ModelSamplingPolicy:
             return [random.choice(legal_moves) if legal_moves else None for legal_moves in legal_moves_list]
 
 
-def load_gpt2_model_and_tokenizer(model_path: str, device: str, config_path: Optional[str] = None):
-    """Load the model and tokenizer from the given path."""
-    from model.gpt2_model import GPT, GPTConfig
-    from llm_tokens.chess.tokenizer_factory import init_tokenizer
-
-    if not config_path:
-        raise ValueError("--config_path is required when using model sampling policy")
-
-    with open(config_path, "r") as f:
-        cfg = yaml.safe_load(f)
-
-    tokenizer = init_tokenizer(name=cfg["tokenizer"]["name"], config=cfg["tokenizer"])
-    vocab_size = int(tokenizer.get_vocab_size()) if hasattr(tokenizer, "get_vocab_size") else int(len(tokenizer.get_vocab()))
-
-    model_cfg = cfg["model"]
-    model = GPT(
-        GPTConfig(
-            vocab_size=vocab_size,
-            block_size=model_cfg["block_size"],
-            n_layer=model_cfg["n_layer"],
-            n_head=model_cfg["n_head"],
-            n_embed=model_cfg["n_embed"],
-            dropout=model_cfg.get("dropout", 0.0),
-            mlp_type=model_cfg.get("mlp_type", "mlp"),
-        )
-    )
-
-    checkpoint_path = Path(model_path)
-    if checkpoint_path.is_dir():
-        weight_files = (
-            list(checkpoint_path.glob("model.safetensors"))
-            + list(checkpoint_path.glob("pytorch_model.bin"))
-            + [f for f in checkpoint_path.glob("*.safetensors") if f.name != "optimizer.safetensors"]
-            + [f for f in checkpoint_path.glob("*.bin") if f.name != "optimizer.bin"]
-            + list(checkpoint_path.glob("*.pt"))
-            + list(checkpoint_path.glob("*.pth"))
-        )
-        if not weight_files:
-            raise FileNotFoundError(f"No model weights found in {checkpoint_path}")
-        checkpoint_path = weight_files[0]
-
-    if str(checkpoint_path).endswith(".safetensors"):
-        from safetensors.torch import load_file
-
-        state_dict = load_file(checkpoint_path)
-    else:
-        state_dict = torch.load(checkpoint_path, map_location=device)
-        if "model" in state_dict:
-            state_dict = state_dict["model"]
-        elif "state_dict" in state_dict:
-            state_dict = state_dict["state_dict"]
-
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
-    if missing:
-        print(f"Warning: Missing keys in checkpoint: {missing}")
-    if unexpected:
-        print(f"Warning: Unexpected keys in checkpoint: {unexpected}")
-
-    model = model.to(device)
-    model.eval()
-    return model, tokenizer
-
-
 def load_hf_model_and_tokenizer(
     hf_model_path: str,
     device: str,
@@ -294,13 +231,6 @@ def create_sampling_policy(args, device):
             )
 
         return policy
-    if args.sampling_policy == "model":
-        if not args.model_path:
-            raise ValueError("--model_path is required when using model sampling policy")
-        if not args.config_path:
-            raise ValueError("--config_path is required when using model sampling policy")
-        model, tokenizer = load_gpt2_model_and_tokenizer(args.model_path, device, config_path=args.config_path)
-        return ModelSamplingPolicy(model, tokenizer, device, temperature=args.temperature, seed=args.seed)
     if args.sampling_policy == "hf_model":
         if not args.model_path:
             raise ValueError("--model_path is required when using HF sampling policy")
@@ -1764,7 +1694,7 @@ def main():
     parser.add_argument("--num_samples", type=int, default=None, help="Number of samples to process (default: all)")
     parser.add_argument("--num_skip_samples", type=int, default=None, help="Number of samples to skip (default: none)")
 
-    parser.add_argument("--sampling_policy", type=str, choices=["random", "stockfish", "model", "hf_model"], default="random")
+    parser.add_argument("--sampling_policy", type=str, choices=["random", "stockfish", "hf_model"], default="random")
     parser.add_argument("--evaluation_policy", type=str, choices=["minimax", "stockfish_leaf_max", "stockfish_direct_max"], default="minimax",
                         help="How to select best move: minimax uses win/draw/loss propagation")
     parser.add_argument("--seed", type=int, default=42)
